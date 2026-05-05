@@ -309,7 +309,7 @@ def score_symbol(symbol: str, engine) -> dict | None:
     if df.empty or len(df) < 20:
         return None
     try:
-        sig = engine.analyse(symbol, df)
+        sig = engine.analyze(symbol)
         if sig.signal in ("NO TRADE", "NEUTRAL"):
             return None
         return {
@@ -319,7 +319,7 @@ def score_symbol(symbol: str, engine) -> dict | None:
             "conf": round(sig.confidence, 1),
         }
     except Exception as exc:
-        log.debug("score failed for %s: %s", symbol, exc)
+        log.warning("score failed for %s: %s", symbol, exc)
         return None
 
 
