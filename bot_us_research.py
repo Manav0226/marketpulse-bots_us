@@ -305,12 +305,9 @@ def build_us_weekly_brief(
 
 
 def score_symbol(symbol: str, engine) -> dict | None:
-    df = fetch_ohlcv(symbol)
-    if df.empty or len(df) < 20:
-        return None
     try:
-        sig = engine.analyze(symbol)
-        if sig.signal in ("NO TRADE", "NEUTRAL"):
+        sig = engine.analyze(symbol, record_signal=False)
+        if sig is None or sig.signal in ("NO TRADE", "NEUTRAL"):
             return None
         return {
             "symbol": symbol,
