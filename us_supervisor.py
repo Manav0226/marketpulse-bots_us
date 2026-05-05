@@ -21,6 +21,12 @@ def build_us_supervision(
     size_multipliers: dict[str, float] = {}
     blocked_symbols: list[str] = []
     event_risk_symbols: list[str] = []
+    source_warnings = list(source_health.get("warnings", []) or [])
+    critical_source_warnings = {
+        "news unavailable",
+        "price data stale",
+        "fundamental data partial",
+    }
 
     for item in earnings:
         symbol = str(item.get("symbol", "")).upper()
@@ -40,7 +46,8 @@ def build_us_supervision(
             size_multipliers[symbol] = 0.75
 
     allow_new_entries = not bool(father_opinion.get("us", {}).get("safe_mode", {}).get("global_pause_new_entries"))
-    if source_health.get("degraded"):
+    forced_safe_mode = any(warning in critical_source_warnings for warning in source_warnings)
+    if forced_safe_mode:
         allow_new_entries = False
 
     return {
@@ -49,8 +56,8 @@ def build_us_supervision(
         "blocked_symbols": sorted(set(blocked_symbols)),
         "size_multipliers": size_multipliers,
         "event_risk_symbols": sorted(set(event_risk_symbols)),
-        "forced_safe_mode": bool(source_health.get("degraded")),
-        "source_warnings": list(source_health.get("warnings", []) or []),
+        "forced_safe_mode": forced_safe_mode,
+        "source_warnings": source_warnings,
         "weekly_focus": [str(item.get("symbol", "")).upper() for item in weekly[:8] if item.get("symbol")],
         "llm_supervisor": bot_state.get("health", {}).get("llm_supervisor", "disabled"),
     }

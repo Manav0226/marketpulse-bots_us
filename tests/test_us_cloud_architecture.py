@@ -204,6 +204,23 @@ class USSupervisorTests(unittest.TestCase):
         self.assertEqual(supervision["size_multipliers"]["AAPL"], 0.5)
         self.assertTrue(supervision["forced_safe_mode"])
 
+    def test_build_us_supervision_allows_entries_when_only_earnings_calendar_missing(self):
+        from us_supervisor import build_us_supervision
+
+        supervision = build_us_supervision(
+            father_opinion={"us": {"mode": "active_supervised", "safe_mode": {"global_pause_new_entries": False}}},
+            weekly_brief={
+                "weekly_candidates": [{"symbol": "CRWD", "score": 22}],
+                "earnings_setups": [],
+                "source_health": {"degraded": True, "warnings": ["earnings calendar unavailable"]},
+            },
+            bot_state={"health": {"llm_supervisor": "available"}},
+            now=dt.datetime(2026, 5, 8, 12, 0, tzinfo=dt.timezone.utc),
+        )
+
+        self.assertTrue(supervision["allow_new_entries"])
+        self.assertFalse(supervision["forced_safe_mode"])
+
 
 if __name__ == "__main__":
     unittest.main()
