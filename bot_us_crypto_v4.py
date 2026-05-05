@@ -55,11 +55,12 @@ EMAIL_FROM = ""; EMAIL_PASSWORD = ""; EMAIL_TO = ""
 US_CAPITAL = CFG_US_CAPITAL        # Use $10K of the $100K paper money
 CRYPTO_CAPITAL = CFG_CRYPTO_CAPITAL
 MAX_RISK = 0.02
-MAX_US_TRADES = 5
+MAX_US_TRADES = 8
 MAX_CRYPTO_TRADES = 3
 DAILY_LOSS_US = 300
 DAILY_LOSS_CRYPTO = 100
-MAX_POSITIONS = 4
+MAX_POSITIONS = 6
+MAX_NEW_US_TRADES_PER_SCAN = 3
 STATE_BOT_ID = "us_v4"
 POLYMARKET_ENABLED = True
 
@@ -377,6 +378,47 @@ class USCryptoBot4:
             ),
         )
 
+    def _weekly_focus_rank(self, symbol: str) -> int:
+        weekly = getattr(self, 'us_weekly_brief', {}).get('weekly_candidates', [])
+        target = str(symbol or '').upper()
+        for idx, item in enumerate(weekly):
+            if str(item.get('symbol', '')).upper() == target:
+                return idx
+        return 999
+
+    def _build_us_holding_profile(self, sig, adjustment, now=None):
+        current = now or datetime.datetime.now(datetime.timezone.utc)
+        rank = self._weekly_focus_rank(getattr(sig, 'symbol', ''))
+        confidence = float(getattr(sig, 'confidence', 0) or 0)
+        signal_name = str(getattr(sig, 'signal', '')).upper()
+        qty_multiplier = float(adjustment.get('qty_multiplier', 1.0) or 1.0)
+        swing_candidate = (
+            rank <= 3
+            or (signal_name == 'STRONG BUY' and confidence >= 65)
+            or qty_multiplier >= 0.75
+        )
+        if swing_candidate:
+            return {
+                'holding_style': 'swing',
+                'planned_hold_days': 3,
+                'overnight_allowed': True,
+                'target_pnl_pct': 4.0,
+                'stop_pnl_pct': -2.0,
+                'trailing_arm_pct': 2.0,
+                'trailing_floor_pct': 0.75,
+                'opened_at': current.isoformat(),
+            }
+        return {
+            'holding_style': 'intraday',
+            'planned_hold_days': 0,
+            'overnight_allowed': False,
+            'target_pnl_pct': 2.5,
+            'stop_pnl_pct': -1.5,
+            'trailing_arm_pct': 1.5,
+            'trailing_floor_pct': 0.5,
+            'opened_at': current.isoformat(),
+        }
+
     def _research_trade_adjustment(self, sig, now=None):
         current = now or datetime.datetime.now(datetime.timezone.utc)
         symbol = str(getattr(sig, 'symbol', '')).upper()
@@ -492,6 +534,7 @@ class USCryptoBot4:
             )
             order_id = order.id
             order_status = getattr(order, 'status', 'submitted')
+            holding_profile = self._build_us_holding_profile(sig, adjustment)
             log.info(f"    ✅ Order placed: {order_id} | status: {order_status}")
 
             # Track position
@@ -504,6 +547,7 @@ class USCryptoBot4:
                 'tgt': sig.target1,
                 'signal': sig.signal,
                 'score': sig.total_score,
+                **holding_profile,
             }
 
             log_t([datetime.datetime.now().isoformat(), 'US', sym, side.upper(), qty,
@@ -519,6 +563,48 @@ class USCryptoBot4:
             return None
 
     # ── MONITOR US POSITIONS ──
+    def _evaluate_us_exit(self, sym, pos, tracked):
+        pnl_pct = pos['pnl_pct']
+        pnl = pos['pnl']
+        target_pct = float(tracked.get('target_pnl_pct', 2.5) or 2.5)
+        stop_pct = float(tracked.get('stop_pnl_pct', -1.5) or -1.5)
+        trailing_arm_pct = float(tracked.get('trailing_arm_pct', 1.5) or 1.5)
+        trailing_floor_pct = float(tracked.get('trailing_floor_pct', 0.5) or 0.5)
+        holding_style = str(tracked.get('holding_style', 'intraday'))
+        planned_hold_days = int(tracked.get('planned_hold_days', 0) or 0)
+        opened_at = str(tracked.get('opened_at') or '')
+        days_open = 0
+        if opened_at:
+            try:
+                opened = datetime.datetime.fromisoformat(opened_at.replace('Z', '+00:00'))
+                if opened.tzinfo is None:
+                    opened = opened.replace(tzinfo=datetime.timezone.utc)
+                days_open = max(0, (datetime.datetime.now(datetime.timezone.utc).date() - opened.date()).days)
+            except Exception:
+                days_open = 0
+
+        if pnl_pct >= target_pct:
+            log.info(f"  ðŸŽ¯ TARGET: {sym} +{pnl_pct:.1f}% (${pnl:.2f})")
+            self._exit_us(sym, pos['current'], pnl, 'TARGET')
+            return {'handled': True}
+        if pnl_pct <= stop_pct:
+            log.info(f"  ðŸ›‘ STOPLOSS: {sym} {pnl_pct:.1f}% (${pnl:.2f})")
+            self._exit_us(sym, pos['current'], pnl, 'STOPLOSS')
+            return {'handled': True}
+        if pnl_pct >= trailing_arm_pct and tracked.get('trailing') is None:
+            tracked['trailing'] = True
+            log.info(f"  ðŸ“ˆ {sym}: +{pnl_pct:.1f}% â€” will exit if drops below +{trailing_floor_pct:.1f}%")
+            return {'handled': True}
+        if tracked.get('trailing') and pnl_pct <= trailing_floor_pct:
+            log.info(f"  ðŸ”’ TRAIL EXIT: {sym} +{pnl_pct:.1f}% (${pnl:.2f})")
+            self._exit_us(sym, pos['current'], pnl, 'TRAIL')
+            return {'handled': True}
+        if holding_style == 'swing' and planned_hold_days > 0 and days_open >= planned_hold_days:
+            log.info(f"  HOLD EXIT: {sym} after {days_open} day(s) (${pnl:.2f})")
+            self._exit_us(sym, pos['current'], pnl, 'TIME_EXIT')
+            return {'handled': True}
+        return {'handled': holding_style == 'swing'}
+
     def monitor_us(self):
         """Check Alpaca positions and manage exits"""
         if not self.alpaca: return
@@ -528,6 +614,9 @@ class USCryptoBot4:
         for sym, pos in positions.items():
             tracked = self.us_positions.get(sym)
             if not tracked: continue  # Position not from our bot
+            profile = self._evaluate_us_exit(sym, pos, tracked)
+            if profile.get('handled'):
+                continue
 
             pnl_pct = pos['pnl_pct']
             pnl = pos['pnl']
@@ -565,7 +654,35 @@ class USCryptoBot4:
             '', '', '', reason, '', 'CLOSED', round(pnl,2)])
         self.us_positions.pop(sym, None)
 
+    def close_intraday_us_positions(self):
+        if not self.alpaca:
+            return
+        positions = self.get_alpaca_positions()
+        if not positions:
+            return
+        for sym, pos in positions.items():
+            tracked = self.us_positions.get(sym)
+            if not tracked:
+                continue
+            if tracked.get('overnight_allowed'):
+                continue
+            self._exit_us(sym, pos['current'], pos['pnl'], 'END_OF_DAY')
+
     # ── SCAN US STOCKS ──
+    def close_intraday_us_positions(self):
+        if not self.alpaca:
+            return
+        positions = self.get_alpaca_positions()
+        if not positions:
+            return
+        for sym, pos in positions.items():
+            tracked = self.us_positions.get(sym)
+            if not tracked:
+                continue
+            if tracked.get('overnight_allowed'):
+                continue
+            self._exit_us(sym, pos['current'], pos['pnl'], 'END_OF_DAY')
+
     def scan_us(self):
         if not is_us_open():
             return
@@ -604,7 +721,7 @@ class USCryptoBot4:
                 if sym in self.us_positions: continue
                 if len(self.us_positions) >= MAX_POSITIONS: break
                 if self.us_trades >= MAX_US_TRADES: break
-                if placed >= 2: break  # Max 2 new trades per scan
+                if placed >= MAX_NEW_US_TRADES_PER_SCAN: break
 
                 self.place_us_trade(s)
                 placed += 1
@@ -795,9 +912,8 @@ class USCryptoBot4:
 
                 # Daily reset at midnight UTC
                 if today != last_day:
-                    # Close all US positions at end of day
                     if self.us_positions:
-                        self.close_all_us()
+                        self.close_intraday_us_positions()
                     self.summary()
                     self.daily_reset()
                     last_day = today

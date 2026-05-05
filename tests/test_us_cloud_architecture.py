@@ -224,6 +224,47 @@ class USExecutionResearchIntegrationTests(unittest.TestCase):
         finally:
             usbot.STATE_DIR = original_state_dir
 
+    def test_build_us_holding_profile_prefers_swing_for_top_ranked_focus_name(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        from bot_us_crypto_v4 import USCryptoBot4
+
+        class Signal:
+            symbol = "CRWD"
+            signal = "STRONG BUY"
+            confidence = 69.4
+
+        bot = USCryptoBot4.__new__(USCryptoBot4)
+        bot.us_weekly_brief = {
+            "weekly_candidates": [
+                {"symbol": "CRWD", "score": 17},
+                {"symbol": "GOOGL", "score": 17},
+            ]
+        }
+
+        profile = bot._build_us_holding_profile(Signal(), {"qty_multiplier": 1.0}, now=dt.datetime(2026, 5, 8, 12, 0, tzinfo=dt.timezone.utc))
+
+        self.assertEqual(profile["holding_style"], "swing")
+        self.assertTrue(profile["overnight_allowed"])
+        self.assertEqual(profile["planned_hold_days"], 3)
+
+    def test_build_us_holding_profile_keeps_weaker_name_intraday(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        from bot_us_crypto_v4 import USCryptoBot4
+
+        class Signal:
+            symbol = "XYZ"
+            signal = "BUY"
+            confidence = 54.0
+
+        bot = USCryptoBot4.__new__(USCryptoBot4)
+        bot.us_weekly_brief = {"weekly_candidates": [{"symbol": "CRWD", "score": 17}]}
+
+        profile = bot._build_us_holding_profile(Signal(), {"qty_multiplier": 0.5}, now=dt.datetime(2026, 5, 8, 12, 0, tzinfo=dt.timezone.utc))
+
+        self.assertEqual(profile["holding_style"], "intraday")
+        self.assertFalse(profile["overnight_allowed"])
+        self.assertEqual(profile["planned_hold_days"], 0)
+
 
 class USSupervisorTests(unittest.TestCase):
     def test_build_us_supervision_blocks_symbols_and_sets_size_multipliers(self):

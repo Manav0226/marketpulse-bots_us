@@ -328,20 +328,94 @@ def _extract_growth(info: dict, *keys: str) -> float:
     return 0.0
 
 
+def _normalize_earnings_date(value) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return None
+    text = text.replace("Z", "+00:00")
+    for candidate in (text, text.split(" ")[0]):
+        try:
+            return dt.datetime.fromisoformat(candidate).date().isoformat()
+        except Exception:
+            try:
+                return dt.date.fromisoformat(candidate).isoformat()
+            except Exception:
+                continue
+    return None
+
+
+def _extract_earnings_date_from_calendar(cal) -> str | None:
+    if cal is None or getattr(cal, "empty", True):
+        return None
+    try:
+        if hasattr(cal, "values"):
+            for row in cal.values.tolist():
+                values = row if isinstance(row, list) else [row]
+                for value in values:
+                    normalized = _normalize_earnings_date(value)
+                    if normalized:
+                        return normalized
+    except Exception:
+        pass
+    return None
+
+
+def fetch_finnhub_earnings_date(symbol: str, now: dt.date | None = None) -> str | None:
+    if not FINNHUB_KEY or requests is None:
+        return None
+    current = now or dt.date.today()
+    try:
+        resp = requests.get(
+            "https://finnhub.io/api/v1/calendar/earnings",
+            params={
+                "from": current.isoformat(),
+                "to": (current + dt.timedelta(days=120)).isoformat(),
+                "symbol": symbol,
+                "token": FINNHUB_KEY,
+            },
+            timeout=10,
+        )
+        payload = resp.json()
+        items = payload.get("earningsCalendar", []) if isinstance(payload, dict) else []
+        for item in items:
+            if str(item.get("symbol", "")).upper() != symbol.upper():
+                continue
+            normalized = _normalize_earnings_date(item.get("date"))
+            if normalized:
+                return normalized
+    except Exception:
+        return None
+    return None
+
+
+def resolve_earnings_date(symbol: str, ticker) -> str | None:
+    earnings_date = _extract_earnings_date_from_calendar(getattr(ticker, "calendar", None))
+    if earnings_date:
+        return earnings_date
+    try:
+        table = ticker.get_earnings_dates(limit=6)
+        if table is not None and not getattr(table, "empty", True):
+            index = list(getattr(table, "index", []) or [])
+            for value in index:
+                normalized = _normalize_earnings_date(value)
+                if normalized:
+                    return normalized
+    except Exception:
+        pass
+    return fetch_finnhub_earnings_date(symbol)
+
+
 def build_earnings_setup(symbol: str, technical_score: float) -> dict | None:
     if yf is None:
         return None
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info if isinstance(ticker.info, dict) else {}
-        cal = ticker.calendar
-        if cal is None or getattr(cal, "empty", True):
+        earnings_date = resolve_earnings_date(symbol, ticker)
+        if not earnings_date:
             return None
-        earnings_date = None
-        try:
-            earnings_date = str(cal.iloc[0, 0]).split(" ")[0]
-        except Exception:
-            pass
         news_score = fetch_news_score(symbol)
         revenue_growth = _extract_growth(info, "revenueGrowth", "quarterlyRevenueGrowth")
         earnings_growth = _extract_growth(info, "earningsGrowth", "earningsQuarterlyGrowth")

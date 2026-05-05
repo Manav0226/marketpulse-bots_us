@@ -2,6 +2,24 @@ import unittest
 
 
 class USResearchBotTests(unittest.TestCase):
+    def test_resolve_earnings_date_falls_back_to_finnhub_calendar(self):
+        import bot_us_research as mod
+
+        class FakeTicker:
+            calendar = None
+
+            def get_earnings_dates(self, limit=6):
+                return None
+
+        original = mod.fetch_finnhub_earnings_date
+        try:
+            mod.fetch_finnhub_earnings_date = lambda symbol, now=None: "2026-05-12"
+            earnings_date = mod.resolve_earnings_date("AAPL", FakeTicker())
+        finally:
+            mod.fetch_finnhub_earnings_date = original
+
+        self.assertEqual(earnings_date, "2026-05-12")
+
     def test_build_weekly_candidates_prefers_strongest_conviction(self):
         from bot_us_research import build_weekly_candidates
 
