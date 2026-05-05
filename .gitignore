@@ -1,0 +1,14 @@
+.auth/
+.test_tmp/
+__pycache__/
+*.pyc
+config/config.env
+logs/
+briefings/
+reports/
+.railway/
+.venv/
+venv/
+*.xlsx
+TradeLog_temp_*.xlsx
+*.log

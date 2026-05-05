@@ -1,0 +1,42 @@
+# MarketPulse Bot — Python dependencies
+# Install with: pip install -r requirements.txt
+#
+# ─── IMPORTANT: yfinance version note ────────────────────────────────────────
+# yfinance ≥ 0.2.37 switched from 'requests' to 'curl_cffi' as its HTTP backend.
+# curl_cffi has a known issue where pressing Ctrl+C mid-request prints a noisy
+# "Exception ignored from cffi callback <buffer_callback>" traceback to stderr.
+# This is cosmetic only — the bot handles it correctly — but the stderr filter
+# in bot_india_v5.py suppresses it automatically.
+#
+# If you want to avoid curl_cffi entirely, pin to the last requests-based version:
+#   yfinance==0.2.36        ← stable, no curl_cffi, slightly older data format
+#
+# If you're happy with the latest version and our stderr filter, use:
+#   yfinance>=0.2.37        ← latest, uses curl_cffi, filter applied in code
+#
+# Current recommendation: use latest (the filter handles the noise cleanly)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Core trading dependencies
+kiteconnect>=4.2.0          # Zerodha API — official client
+yfinance>=0.2.37            # Market data (curl_cffi noise suppressed in code)
+pandas>=2.0.0               # Data manipulation
+numpy>=1.24.0               # Numerical calculations
+requests>=2.31.0            # HTTP (used by notifier for Telegram)
+
+# Report generation (Bot B)
+python-pptx>=0.6.21         # PowerPoint report builder
+
+# Optional — faster data fetching (yfinance uses this automatically if installed)
+# curl_cffi>=0.6.0          # Already pulled in by yfinance ≥0.2.37
+
+# ─── Install command ─────────────────────────────────────────────────────────
+# pip install -r requirements.txt
+#
+# If you hit the curl_cffi error and want the old behaviour temporarily:
+# pip install yfinance==0.2.36
+# (You may need: pip install yfinance==0.2.36 --force-reinstall)
+
+flask
+python-dotenv
+openpyxl>=3.1.0
