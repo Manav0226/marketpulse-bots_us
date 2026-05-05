@@ -40,3 +40,5 @@ python-pptx>=0.6.21         # PowerPoint report builder
 flask
 python-dotenv
 openpyxl>=3.1.0
+alpaca-trade-api>=3.2.0
+ccxt>=4.4.0
