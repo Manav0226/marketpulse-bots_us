@@ -274,7 +274,12 @@ class USCryptoBot4:
             opinion = json.loads(path.read_text(encoding='utf-8'))
             safe_mode = opinion.get('us', {}).get('safe_mode', {})
             if safe_mode.get('global_pause_new_entries'):
-                self.safe_mode = dict(safe_mode)
+                if supervision_pause:
+                    pass
+                elif str(safe_mode.get('reason') or '').strip().lower() == 'brain_risk_off':
+                    self.safe_mode = dict(safe_mode)
+                else:
+                    self.safe_mode = {'global_pause_new_entries': False, 'reason': ''}
             elif not supervision_pause:
                 self.safe_mode = {'global_pause_new_entries': False, 'reason': ''}
         except Exception as exc:

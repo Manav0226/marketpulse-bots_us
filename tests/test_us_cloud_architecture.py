@@ -180,6 +180,50 @@ class USExecutionResearchIntegrationTests(unittest.TestCase):
         self.assertTrue(decision["allow"])
         self.assertEqual(decision["qty_multiplier"], 0.5)
 
+    def test_refresh_supervision_ignores_stale_father_pause_when_supervision_allows_entries(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        import json
+        import bot_us_crypto_v4 as usbot
+
+        state_dir = Path.cwd() / ".test_tmp" / "us_supervision_refresh"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "us_supervision.json").write_text(
+            json.dumps(
+                {
+                    "allow_new_entries": True,
+                    "forced_safe_mode": False,
+                    "source_warnings": ["earnings calendar unavailable"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (state_dir / "father_opinion.json").write_text(
+            json.dumps(
+                {
+                    "us": {
+                        "safe_mode": {
+                            "global_pause_new_entries": True,
+                            "reason": "earnings calendar unavailable, price data stale",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        original_state_dir = usbot.STATE_DIR
+        try:
+            usbot.STATE_DIR = state_dir
+            bot = usbot.USCryptoBot4.__new__(usbot.USCryptoBot4)
+            bot.safe_mode = {"global_pause_new_entries": True, "reason": "old_pause"}
+            bot.scheduler_status = {}
+
+            bot._maybe_refresh_supervision()
+
+            self.assertFalse(bot.safe_mode["global_pause_new_entries"])
+        finally:
+            usbot.STATE_DIR = original_state_dir
+
 
 class USSupervisorTests(unittest.TestCase):
     def test_build_us_supervision_blocks_symbols_and_sets_size_multipliers(self):
