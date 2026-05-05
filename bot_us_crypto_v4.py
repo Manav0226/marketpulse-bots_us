@@ -222,15 +222,25 @@ class USCryptoBot4:
         return (STATE_DIR / 'PAUSE_US_NEW_ENTRIES').exists()
 
     def _maybe_refresh_supervision(self):
+        supervision_pause = False
         super_path = STATE_DIR / "us_supervision.json"
         if super_path.exists():
             try:
                 supervision = json.loads(super_path.read_text(encoding='utf-8'))
                 if supervision.get('forced_safe_mode'):
+                    supervision_pause = True
                     self.safe_mode = {
                         'global_pause_new_entries': True,
                         'reason': ', '.join(supervision.get('source_warnings', [])[:3]) or 'us_supervision',
                     }
+                elif not supervision.get('allow_new_entries', True):
+                    supervision_pause = True
+                    self.safe_mode = {
+                        'global_pause_new_entries': True,
+                        'reason': 'us_supervision_pause',
+                    }
+                else:
+                    self.safe_mode = {'global_pause_new_entries': False, 'reason': ''}
                 self.scheduler_status['last_us_supervision_load'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             except Exception as exc:
                 log.debug(f"US supervision refresh skipped: {exc}")
@@ -242,6 +252,8 @@ class USCryptoBot4:
             safe_mode = opinion.get('us', {}).get('safe_mode', {})
             if safe_mode.get('global_pause_new_entries'):
                 self.safe_mode = dict(safe_mode)
+            elif not supervision_pause:
+                self.safe_mode = {'global_pause_new_entries': False, 'reason': ''}
         except Exception as exc:
             log.debug(f"Supervisor refresh skipped: {exc}")
 
