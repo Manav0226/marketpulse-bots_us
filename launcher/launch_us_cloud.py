@@ -14,10 +14,12 @@ import sys
 import time
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from marketpulse_runtime import resolve_log_dir, resolve_state_dir
 
-
-ROOT = Path(__file__).parent.parent
 PYTHON = sys.executable
 LOG_DIR = resolve_log_dir()
 STATE_DIR = resolve_state_dir()

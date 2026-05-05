@@ -29,7 +29,7 @@ With one worker and one volume, those files stay consistent and restart-safe.
 2. In Railway, create a new project from the GitHub repo.
 3. Add a `Worker` service from that repo.
 4. Set the start command to:
-   - `python launcher/launch_us_cloud.py`
+   - `python -m launcher.launch_us_cloud`
 5. Add a persistent volume.
 6. Mount that volume at:
    - `/data`

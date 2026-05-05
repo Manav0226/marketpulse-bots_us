@@ -104,7 +104,7 @@ CRYPTO_CAPITAL=500
 2. In Railway, create a new project from that repo.
 3. Add a `Worker` service.
 4. Set the start command to:
-   - `python launcher/launch_us_cloud.py`
+   - `python -m launcher.launch_us_cloud`
 5. Attach a persistent volume at `/data`.
 6. Add the required environment variables.
 7. Deploy.
