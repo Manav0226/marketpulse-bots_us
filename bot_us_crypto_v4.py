@@ -81,6 +81,7 @@ CRYPTO_WATCHLIST = [
 # ══════════ LOGGING ══════════
 LOG_DIR = resolve_log_dir(); LOG_DIR.mkdir(parents=True, exist_ok=True)
 STATE_DIR = resolve_state_dir(); STATE_DIR.mkdir(parents=True, exist_ok=True)
+RUNTIME_STATUS_PATH = STATE_DIR / "us_runtime_status.json"
 D = datetime.date.today().strftime("%Y-%m-%d")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[logging.FileHandler(LOG_DIR/f"uscrp4_{D}.log",encoding='utf-8'),logging.StreamHandler(sys.stdout)])
@@ -165,6 +166,7 @@ class USCryptoBot4:
         self.us_wins = 0; self.us_losses = 0
         self.running = False
         self.safe_mode = {"global_pause_new_entries": False, "reason": ""}
+        self.crypto_disabled_reason = ""
         self.scheduler_status = {}
         self.performance = {
             "us_equities": {"win_rate": 0.0, "trades": 0, "pnl": 0.0},
@@ -196,11 +198,31 @@ class USCryptoBot4:
     def _health_snapshot(self):
         return {
             'connected': bool(self.alpaca or self.exchange),
+            'alpaca_connected': bool(self.alpaca),
+            'binance_connected': bool(self.exchange),
+            'crypto_disabled_reason': self.crypto_disabled_reason,
             'llm_supervisor': 'available' if OPENAI_API_KEY else 'disabled',
             'llm_model': OPENAI_MODEL if OPENAI_API_KEY else '',
             'auto_pause_only': AUTO_PAUSE_ONLY,
             'market_window': market_window_label(datetime.datetime.now(datetime.timezone.utc)),
         }
+
+    def _write_runtime_status(self):
+        payload = {
+            'generated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'alpaca_connected': bool(self.alpaca),
+            'binance_connected': bool(self.exchange),
+            'crypto_disabled_reason': self.crypto_disabled_reason,
+            'safe_mode': self.safe_mode,
+            'scheduler_status': self.scheduler_status,
+            'performance': self.performance,
+            'open_positions': list((self.us_positions or {}).keys()),
+            'open_bets': list((self.polymarket_bets or {}).keys()),
+        }
+        try:
+            RUNTIME_STATUS_PATH.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        except Exception as exc:
+            log.debug(f"Runtime status write skipped: {exc}")
 
     def _sync_state(self):
         update_bot_state(STATE_BOT_ID, {
@@ -215,6 +237,7 @@ class USCryptoBot4:
             'scheduler_status': self.scheduler_status,
             'safe_mode': self.safe_mode,
         })
+        self._write_runtime_status()
 
     def _new_entries_paused(self):
         if self.safe_mode.get('global_pause_new_entries'):
@@ -283,10 +306,18 @@ class USCryptoBot4:
             else:
                 self.exchange = ccxt.binance()
             self.exchange.load_markets()
+            self.crypto_disabled_reason = ""
             log.info(f"Binance: {len(self.exchange.markets)} markets (public data)")
             return True
         except Exception as e:
-            log.error(f"Binance failed: {e}"); return False
+            msg = str(e)
+            if "restricted location" in msg.lower():
+                self.crypto_disabled_reason = "binance_restricted_location"
+                log.warning("Binance disabled on this host: restricted location")
+            else:
+                self.crypto_disabled_reason = "binance_connect_failed"
+                log.error(f"Binance failed: {e}")
+            return False
 
     # ── LOAD DAILY BRIEF ──
     def _load_daily_brief(self):
@@ -585,6 +616,10 @@ class USCryptoBot4:
 
     # ── SCAN CRYPTO ──
     def scan_crypto(self):
+        if self.crypto_disabled_reason:
+            self.scheduler_status['last_crypto_skip_reason'] = self.crypto_disabled_reason
+            self._sync_state()
+            return
         if not self.exchange or not self.engine:
             return
         if self._new_entries_paused():

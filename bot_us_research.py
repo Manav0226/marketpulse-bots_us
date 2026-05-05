@@ -401,10 +401,20 @@ def main():
         "earnings_calendar_available": bool(earnings_setups),
         "price_data_fresh": bool(results),
         "fundamental_data_partial": False,
+        "symbols_requested": len(US_SAMPLE),
+        "symbols_scored": len(results),
+        "symbols_with_earnings_setups": len(earnings_setups),
     }
     source_adjustment = apply_source_health_adjustment(80.0, source_health)
     source_health["degraded"] = source_adjustment["degraded"]
     source_health["warnings"] = source_adjustment["warnings"]
+    log.info(
+        "[SUMMARY] scored=%s/%s | earnings=%s | warnings=%s",
+        len(results),
+        len(US_SAMPLE),
+        len(earnings_setups),
+        ", ".join(source_health["warnings"]) or "none",
+    )
     brief = build_us_weekly_brief(results, sector_rotation, earnings_setups, generated_at, market_date, source_health=source_health)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)

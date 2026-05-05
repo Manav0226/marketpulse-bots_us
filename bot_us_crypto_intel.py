@@ -21,12 +21,31 @@ logging.basicConfig(
 )
 log = logging.getLogger("USIntel")
 STATE_DIR = resolve_state_dir()
+INTEL_STATE_PATH = STATE_DIR / "us_intel_state.json"
 
 
 class USCryptoIntelBot:
     def __init__(self):
         self.notify = Notifier(US_INTEL_TG_TOKEN, US_INTEL_TG_CHAT)
-        self.last_sent = {"premarket": "", "open": "", "midday": "", "eod": "", "crypto": ""}
+        self.last_sent = self._load_last_sent()
+
+    def _load_last_sent(self):
+        default = {"premarket": "", "open": "", "midday": "", "eod": "", "crypto": ""}
+        if not INTEL_STATE_PATH.exists():
+            return default
+        try:
+            payload = json.loads(INTEL_STATE_PATH.read_text(encoding="utf-8"))
+            default.update(payload.get("last_sent", {}) or {})
+        except Exception:
+            pass
+        return default
+
+    def _save_last_sent(self):
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            INTEL_STATE_PATH.write_text(json.dumps({"last_sent": self.last_sent}, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def _state(self):
         return read_bot_state().get("bots", {}).get("us_v4", {})
@@ -61,6 +80,7 @@ class USCryptoIntelBot:
             f"Safe mode: {bool((state.get('safe_mode') or {}).get('global_pause_new_entries'))}"
         )
         self.last_sent[window] = stamp
+        self._save_last_sent()
 
     def send_crypto_heartbeat(self):
         now = dt.datetime.now(dt.timezone.utc)
@@ -76,6 +96,7 @@ class USCryptoIntelBot:
             f"Safe mode: {bool((state.get('safe_mode') or {}).get('global_pause_new_entries'))}"
         )
         self.last_sent["crypto"] = stamp
+        self._save_last_sent()
 
     def run(self):
         while True:

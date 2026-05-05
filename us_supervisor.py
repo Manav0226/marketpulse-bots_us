@@ -7,6 +7,27 @@ from pathlib import Path
 from marketpulse_runtime import resolve_state_dir
 
 
+def _father_pause_is_actionable(father_opinion: dict, source_warnings: list[str], critical_source_warnings: set[str]) -> bool:
+    us = father_opinion.get("us", {}) if isinstance(father_opinion, dict) else {}
+    safe_mode = us.get("safe_mode", {}) if isinstance(us, dict) else {}
+    if not safe_mode.get("global_pause_new_entries"):
+        return False
+
+    reason = str(safe_mode.get("reason") or "").strip().lower()
+    if not reason:
+        return True
+
+    critical_matches = [warning for warning in source_warnings if warning in critical_source_warnings]
+    if critical_matches:
+        return True
+
+    normalized_reason = {part.strip() for part in reason.split(",") if part.strip()}
+    noncritical_source_set = {str(item).strip().lower() for item in source_warnings if str(item).strip()}
+    if normalized_reason and normalized_reason.issubset(noncritical_source_set):
+        return False
+    return True
+
+
 def build_us_supervision(
     father_opinion: dict,
     weekly_brief: dict,
@@ -45,7 +66,11 @@ def build_us_supervision(
         else:
             size_multipliers[symbol] = 0.75
 
-    allow_new_entries = not bool(father_opinion.get("us", {}).get("safe_mode", {}).get("global_pause_new_entries"))
+    allow_new_entries = not _father_pause_is_actionable(
+        father_opinion=father_opinion,
+        source_warnings=source_warnings,
+        critical_source_warnings=critical_source_warnings,
+    )
     forced_safe_mode = any(warning in critical_source_warnings for warning in source_warnings)
     if forced_safe_mode:
         allow_new_entries = False

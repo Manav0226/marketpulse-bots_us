@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import subprocess
 import sys
 import time
+import datetime as dt
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +26,7 @@ PYTHON = sys.executable
 LOG_DIR = resolve_log_dir()
 STATE_DIR = resolve_state_dir()
 MAX_RESTARTS = 5
+WEEKLY_BRIEF_PATH = STATE_DIR / "us_weekly_brief.json"
 
 BOTS = {
     "father": {"script": "bot_father.py", "enabled": True},
@@ -70,6 +73,40 @@ def _start_bot(name: str, script: str) -> subprocess.Popen:
     return proc
 
 
+def _weekly_brief_stale(now: dt.datetime | None = None) -> bool:
+    current = now or dt.datetime.now(dt.timezone.utc)
+    if not WEEKLY_BRIEF_PATH.exists():
+        return True
+    try:
+        payload = json.loads(WEEKLY_BRIEF_PATH.read_text(encoding="utf-8"))
+        generated_at = str(payload.get("generated_at") or "")
+        if not generated_at:
+            return True
+        parsed = dt.datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        age_hours = (current - parsed.astimezone(dt.timezone.utc)).total_seconds() / 3600.0
+        return age_hours >= 12 or not payload.get("weekly_candidates")
+    except Exception:
+        return True
+
+
+def _run_startup_catchup() -> None:
+    env = _bot_env()
+    commands: list[list[str]] = [[PYTHON, str(ROOT / "us_supervisor.py")]]
+    if _weekly_brief_stale():
+        commands.append([PYTHON, str(ROOT / "bot_us_research.py")])
+        commands.append([PYTHON, str(ROOT / "us_supervisor.py")])
+    for command in commands:
+        try:
+            proc = subprocess.run(command, cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=180)
+            log.info("Startup catch-up ran: %s (exit %s)", Path(command[-1]).name, proc.returncode)
+            if proc.returncode != 0 and proc.stderr:
+                log.warning("Catch-up stderr for %s: %s", Path(command[-1]).name, proc.stderr[-400:])
+        except Exception as exc:
+            log.warning("Startup catch-up failed for %s: %s", Path(command[-1]).name, exc)
+
+
 def should_restart(exit_code: int | None, restart_count: int) -> bool:
     return exit_code not in (0, None) and restart_count < MAX_RESTARTS
 
@@ -84,6 +121,7 @@ def main() -> None:
     log.info("State dir: %s", STATE_DIR)
     log.info("Log dir: %s", LOG_DIR)
     log.info("=" * 60)
+    _run_startup_catchup()
 
     procs: dict[str, subprocess.Popen] = {}
     restart_counts: dict[str, int] = {}
