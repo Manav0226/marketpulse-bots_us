@@ -246,6 +246,31 @@ class USSupervisorTests(unittest.TestCase):
         self.assertTrue(supervision["allow_new_entries"])
         self.assertFalse(supervision["forced_safe_mode"])
 
+    def test_build_us_supervision_ignores_stale_father_pause_with_old_critical_phrase_when_current_brief_is_healthy(self):
+        from us_supervisor import build_us_supervision
+
+        supervision = build_us_supervision(
+            father_opinion={
+                "us": {
+                    "mode": "paused",
+                    "safe_mode": {
+                        "global_pause_new_entries": True,
+                        "reason": "earnings calendar unavailable, price data stale",
+                    },
+                }
+            },
+            weekly_brief={
+                "weekly_candidates": [{"symbol": "CRWD", "score": 22}],
+                "earnings_setups": [],
+                "source_health": {"degraded": True, "warnings": ["earnings calendar unavailable"]},
+            },
+            bot_state={"health": {"llm_supervisor": "available"}},
+            now=dt.datetime(2026, 5, 8, 12, 0, tzinfo=dt.timezone.utc),
+        )
+
+        self.assertTrue(supervision["allow_new_entries"])
+        self.assertFalse(supervision["forced_safe_mode"])
+
 
 if __name__ == "__main__":
     unittest.main()

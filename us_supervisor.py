@@ -23,7 +23,12 @@ def _father_pause_is_actionable(father_opinion: dict, source_warnings: list[str]
 
     normalized_reason = {part.strip() for part in reason.split(",") if part.strip()}
     noncritical_source_set = {str(item).strip().lower() for item in source_warnings if str(item).strip()}
+    known_source_warning_set = noncritical_source_set | set(critical_source_warnings) | {
+        "earnings calendar unavailable",
+    }
     if normalized_reason and normalized_reason.issubset(noncritical_source_set):
+        return False
+    if normalized_reason and normalized_reason.issubset(known_source_warning_set):
         return False
     return True
 
