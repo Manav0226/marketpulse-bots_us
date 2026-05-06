@@ -29,6 +29,13 @@ class USMarketScheduleTests(unittest.TestCase):
 
         self.assertFalse(is_us_market_open(now))
 
+    def test_india_market_open_during_regular_session(self):
+        from core.india_market_scheduler import is_india_market_open
+
+        now = dt.datetime(2026, 5, 6, 5, 0, tzinfo=dt.timezone.utc)
+
+        self.assertTrue(is_india_market_open(now))
+
 
 class USCloudStateTests(unittest.TestCase):
     def _tmp_dir(self, name: str) -> Path:
@@ -264,6 +271,61 @@ class USExecutionResearchIntegrationTests(unittest.TestCase):
         self.assertEqual(profile["holding_style"], "intraday")
         self.assertFalse(profile["overnight_allowed"])
         self.assertEqual(profile["planned_hold_days"], 0)
+
+    def test_should_run_us_close_cycle_after_market_close_once_per_day(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        from bot_us_crypto_v4 import USCryptoBot4
+
+        bot = USCryptoBot4.__new__(USCryptoBot4)
+
+        now = dt.datetime(2026, 5, 5, 20, 15, tzinfo=dt.timezone.utc)
+
+        self.assertTrue(bot._should_run_us_close_cycle(now, None))
+        self.assertFalse(bot._should_run_us_close_cycle(now, dt.date(2026, 5, 5)))
+
+    def test_sync_polymarket_snapshot_tracks_watchlist_items(self):
+        import json
+        import bot_us_crypto_v4 as usbot
+
+        state_dir = Path.cwd() / ".test_tmp" / "polymarket_watch"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "polymarket_watchlist.json").write_text(
+            json.dumps(
+                {
+                    "watchlist": [
+                        {
+                            "market_id": "election-2028",
+                            "strategy_mode": "event",
+                            "entry_reason": "copy_tracked_watch",
+                            "confidence": 71,
+                            "risk_budget": 25,
+                            "side": "yes",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        original_state_dir = usbot.STATE_DIR
+        original_watch_path = usbot.POLYMARKET_WATCHLIST_PATH
+        try:
+            usbot.STATE_DIR = state_dir
+            usbot.POLYMARKET_WATCHLIST_PATH = state_dir / "polymarket_watchlist.json"
+            bot = usbot.USCryptoBot4.__new__(usbot.USCryptoBot4)
+            bot.polymarket_bets = {}
+            bot.scheduler_status = {}
+            bot.performance = {"polymarket": {"bets": 0}}
+            bot._sync_state = lambda: None
+
+            bot.sync_polymarket_snapshot()
+
+            self.assertIn("election-2028", bot.polymarket_bets)
+            self.assertEqual(bot.polymarket_bets["election-2028"]["side"], "yes")
+            self.assertEqual(bot.scheduler_status["last_polymarket_watch_items"], 1)
+        finally:
+            usbot.STATE_DIR = original_state_dir
+            usbot.POLYMARKET_WATCHLIST_PATH = original_watch_path
 
 
 class USSupervisorTests(unittest.TestCase):

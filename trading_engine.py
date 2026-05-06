@@ -836,6 +836,15 @@ class TradingEngine:
         Falls back to NSE free API for daily data.
         Returns DataFrame with open/high/low/close/volume.
         """
+        external_fetcher = getattr(self, "_ohlcv_fetcher", None)
+        if callable(external_fetcher):
+            try:
+                external = external_fetcher(symbol, interval=interval, days=days)
+                if external is not None and not external.empty:
+                    external.columns = [c.lower() for c in external.columns]
+                    return external.reset_index(drop=True)
+            except Exception:
+                pass
         if self._kite is None:
             # No kite connection — this shouldn't happen in live
             # but allow for backtesting mode via yfinance fallback

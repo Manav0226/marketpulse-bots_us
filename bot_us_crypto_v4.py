@@ -16,7 +16,9 @@ VIEW YOUR TRADES:
 """
 import sys,os,csv,time,datetime,logging,traceback,json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from core.us_market_data import fetch_alpaca_bars
 from core.config_loader import (
     ALPACA_KEY as CFG_ALPACA_KEY,
     ALPACA_PAPER as CFG_ALPACA_PAPER,
@@ -83,6 +85,9 @@ CRYPTO_WATCHLIST = [
 LOG_DIR = resolve_log_dir(); LOG_DIR.mkdir(parents=True, exist_ok=True)
 STATE_DIR = resolve_state_dir(); STATE_DIR.mkdir(parents=True, exist_ok=True)
 RUNTIME_STATUS_PATH = STATE_DIR / "us_runtime_status.json"
+REPORT_STATUS_PATH = STATE_DIR / "us_report_status.json"
+POLYMARKET_WATCHLIST_PATH = STATE_DIR / "polymarket_watchlist.json"
+ET = ZoneInfo("America/New_York")
 D = datetime.date.today().strftime("%Y-%m-%d")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[logging.FileHandler(LOG_DIR/f"uscrp4_{D}.log",encoding='utf-8'),logging.StreamHandler(sys.stdout)])
@@ -159,6 +164,8 @@ class USCryptoBot4:
         self.alpaca = None
         self.exchange = None
         self.engine = TradingEngine(capital=US_CAPITAL) if HAS_ENGINE else None
+        if self.engine:
+            self.engine._ohlcv_fetcher = self._fetch_us_ohlcv
         self.us_positions = {}   # symbol -> {order_id, entry, sl, tgt, qty, side}
         self.polymarket_bets = {}
         self.crypto_signals = {} # symbol -> last_signal_time (duplicate prevention)
@@ -182,6 +189,48 @@ class USCryptoBot4:
         self.notify = Notifier(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, EMAIL_FROM, EMAIL_PASSWORD, EMAIL_TO)
         init_log()
         self._restore_state()
+
+    def _fetch_us_ohlcv(self, symbol, interval='day', days=80):
+        if interval != 'day':
+            return __import__('pandas').DataFrame()
+        try:
+            frame = fetch_alpaca_bars(
+                symbol,
+                ALPACA_KEY,
+                ALPACA_SECRET,
+                timeframe="1Day",
+                days=days,
+            )
+            if frame is not None and not frame.empty:
+                self.scheduler_status['last_us_data_provider'] = 'alpaca_market_data'
+                return frame
+        except Exception as exc:
+            log.debug(f"Alpaca market data fetch failed for {symbol}: {exc}")
+        return __import__('pandas').DataFrame()
+
+    def _load_polymarket_watchlist(self):
+        if not POLYMARKET_WATCHLIST_PATH.exists():
+            return []
+        try:
+            payload = json.loads(POLYMARKET_WATCHLIST_PATH.read_text(encoding='utf-8'))
+        except Exception as exc:
+            log.warning(f"Polymarket watchlist load failed: {exc}")
+            return []
+        if isinstance(payload, dict):
+            items = payload.get('bets') or payload.get('watchlist') or []
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            items = []
+        cleaned = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            market_key = str(item.get('market_id') or item.get('symbol_or_market') or item.get('slug') or '').strip()
+            if not market_key:
+                continue
+            cleaned.append(item)
+        return cleaned
 
     def _restore_state(self):
         try:
@@ -209,16 +258,57 @@ class USCryptoBot4:
         }
 
     def _write_runtime_status(self):
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        live_positions = self.get_alpaca_positions() if self.alpaca else {}
+        position_snapshot = {}
+        for symbol, position in (self.us_positions or {}).items():
+            live = live_positions.get(symbol, {})
+            position_snapshot[symbol] = {
+                'side': position.get('side'),
+                'qty': position.get('qty'),
+                'entry': position.get('entry'),
+                'target': position.get('tgt'),
+                'stop_loss': position.get('sl'),
+                'holding_style': position.get('holding_style', 'intraday'),
+                'overnight_allowed': bool(position.get('overnight_allowed')),
+                'opened_at': position.get('opened_at', ''),
+                'current': live.get('current'),
+                'pnl': live.get('pnl'),
+                'pnl_pct': live.get('pnl_pct'),
+            }
+        report_status = {}
+        if REPORT_STATUS_PATH.exists():
+            try:
+                report_status = json.loads(REPORT_STATUS_PATH.read_text(encoding='utf-8'))
+            except Exception:
+                report_status = {}
         payload = {
-            'generated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'generated_at': now_utc.isoformat(),
             'alpaca_connected': bool(self.alpaca),
             'binance_connected': bool(self.exchange),
             'crypto_disabled_reason': self.crypto_disabled_reason,
             'safe_mode': self.safe_mode,
             'scheduler_status': self.scheduler_status,
             'performance': self.performance,
+            'position_count': len(position_snapshot),
+            'bet_count': len(self.polymarket_bets or {}),
             'open_positions': list((self.us_positions or {}).keys()),
+            'position_snapshot': position_snapshot,
+            'live_positions': live_positions,
             'open_bets': list((self.polymarket_bets or {}).keys()),
+            'sessions': {
+                'us': {
+                    'is_open': is_us_market_open(now_utc),
+                    'window': market_window_label(now_utc),
+                    'date_et': now_utc.astimezone(ET).date().isoformat(),
+                },
+                'crypto': {
+                    'is_open': True,
+                    'window': 'always_on',
+                    'enabled': not bool(self.crypto_disabled_reason),
+                },
+            },
+            'report_status': report_status,
         }
         try:
             RUNTIME_STATUS_PATH.write_text(json.dumps(payload, indent=2), encoding='utf-8')
@@ -668,21 +758,6 @@ class USCryptoBot4:
                 continue
             self._exit_us(sym, pos['current'], pos['pnl'], 'END_OF_DAY')
 
-    # ── SCAN US STOCKS ──
-    def close_intraday_us_positions(self):
-        if not self.alpaca:
-            return
-        positions = self.get_alpaca_positions()
-        if not positions:
-            return
-        for sym, pos in positions.items():
-            tracked = self.us_positions.get(sym)
-            if not tracked:
-                continue
-            if tracked.get('overnight_allowed'):
-                continue
-            self._exit_us(sym, pos['current'], pos['pnl'], 'END_OF_DAY')
-
     def scan_us(self):
         if not is_us_open():
             return
@@ -814,24 +889,68 @@ class USCryptoBot4:
     def sync_polymarket_snapshot(self):
         if not POLYMARKET_ENABLED:
             return
-        self.polymarket_bets.setdefault(
-            'paper_event_watch',
-            {
-                'symbol_or_market': 'paper_event_watch',
-                'venue': 'polymarket',
-                'strategy_mode': 'event',
-                'entry_reason': 'research_watch',
-                'confidence': 0.0,
-                'risk_budget': 0.0,
-                'opened_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                'planned_horizon': 'event_window',
-                'overnight_allowed': True,
-                'brain_override_state': 'paper_only',
-                'news_sensitivity': 'high',
-                'invalidated_at': None,
-            },
-        )
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        watch_items = self._load_polymarket_watchlist()
+        active_keys = set()
+
+        if watch_items:
+            for item in watch_items:
+                market_key = str(item.get('market_id') or item.get('symbol_or_market') or item.get('slug') or '').strip()
+                active_keys.add(market_key)
+                existing = self.polymarket_bets.get(market_key, {})
+                self.polymarket_bets[market_key] = {
+                    'symbol_or_market': market_key,
+                    'venue': 'polymarket',
+                    'strategy_mode': item.get('strategy_mode', existing.get('strategy_mode', 'event')),
+                    'entry_reason': item.get('entry_reason', existing.get('entry_reason', 'copy_tracked_watch')),
+                    'confidence': float(item.get('confidence', existing.get('confidence', 0.0)) or 0.0),
+                    'risk_budget': float(item.get('risk_budget', existing.get('risk_budget', 0.0)) or 0.0),
+                    'opened_at': existing.get('opened_at') or now_iso,
+                    'planned_horizon': item.get('planned_horizon', existing.get('planned_horizon', 'event_window')),
+                    'overnight_allowed': bool(item.get('overnight_allowed', True)),
+                    'brain_override_state': item.get('brain_override_state', existing.get('brain_override_state', 'paper_only')),
+                    'news_sensitivity': item.get('news_sensitivity', existing.get('news_sensitivity', 'high')),
+                    'invalidated_at': None if not item.get('resolved') else (existing.get('invalidated_at') or now_iso),
+                    'side': item.get('side', existing.get('side', 'watch')),
+                    'target_price': item.get('target_price', existing.get('target_price')),
+                    'current_price': item.get('current_price', existing.get('current_price')),
+                    'resolution_date': item.get('resolution_date', existing.get('resolution_date')),
+                    'notes': item.get('notes', existing.get('notes', '')),
+                }
+        else:
+            self.polymarket_bets.setdefault(
+                'paper_event_watch',
+                {
+                    'symbol_or_market': 'paper_event_watch',
+                    'venue': 'polymarket',
+                    'strategy_mode': 'event',
+                    'entry_reason': 'research_watch',
+                    'confidence': 0.0,
+                    'risk_budget': 0.0,
+                    'opened_at': now_iso,
+                    'planned_horizon': 'event_window',
+                    'overnight_allowed': True,
+                    'brain_override_state': 'paper_only',
+                    'news_sensitivity': 'high',
+                    'invalidated_at': None,
+                    'side': 'watch',
+                    'target_price': None,
+                    'current_price': None,
+                    'resolution_date': None,
+                    'notes': '',
+                },
+            )
+            active_keys.add('paper_event_watch')
+
+        for market_key, bet in list(self.polymarket_bets.items()):
+            if market_key in active_keys:
+                continue
+            if bet.get('invalidated_at'):
+                continue
+            bet['invalidated_at'] = now_iso
+
         self.scheduler_status['last_polymarket_sync'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self.scheduler_status['last_polymarket_watch_items'] = len(active_keys)
         self.performance['polymarket']['bets'] = len(self.polymarket_bets)
         self._sync_state()
 
@@ -854,11 +973,35 @@ class USCryptoBot4:
         if self.engine:
             self.engine.recent_signals.clear()
 
-    def summary(self):
+    def summary(self, report_date=None):
         total = self.us_pnl + self.crypto_pnl
         total_trades = self.us_trades + self.crypto_trades
-        self.notify.daily_summary(D, total_trades, self.us_wins, self.us_losses,
+        label = report_date or datetime.datetime.now(ET).date().isoformat()
+        self.notify.daily_summary(label, total_trades, self.us_wins, self.us_losses,
             total, US_CAPITAL + CRYPTO_CAPITAL, "$")
+
+    def _current_us_date(self, now_utc=None):
+        current = now_utc or datetime.datetime.now(datetime.timezone.utc)
+        return current.astimezone(ET).date()
+
+    def _should_run_us_close_cycle(self, now_utc, last_close_date):
+        current_et = now_utc.astimezone(ET)
+        if current_et.weekday() >= 5:
+            return False
+        cutoff = current_et.replace(hour=16, minute=10, second=0, microsecond=0)
+        if current_et < cutoff:
+            return False
+        return last_close_date != current_et.date()
+
+    def _run_us_close_cycle(self, now_utc):
+        report_date = now_utc.astimezone(ET).date().isoformat()
+        if self.us_positions:
+            self.close_intraday_us_positions()
+        self.summary(report_date=report_date)
+        self.daily_reset()
+        self.scheduler_status['last_us_close_cycle'] = now_utc.isoformat()
+        self._sync_state()
+        log.info(f"US close cycle complete: {report_date}")
 
     # ── MAIN LOOP ──
     def run(self):
@@ -898,7 +1041,8 @@ class USCryptoBot4:
             self.notify.alert(f"WARNING\nBacktest win rate: {bt.win_rate}%\nStrategy may need tuning")
 
         self.running = True
-        last_us = 0; last_crypto = 0; last_day = datetime.date.today()
+        last_us = 0; last_crypto = 0
+        last_us_close_date = None
 
         try:
             while self.running:
@@ -908,16 +1052,11 @@ class USCryptoBot4:
                     sys.exit(0)
                 self._maybe_refresh_supervision()
                 now_ts = time.time()
-                today = datetime.date.today()
+                now_utc = datetime.datetime.now(datetime.timezone.utc)
 
-                # Daily reset at midnight UTC
-                if today != last_day:
-                    if self.us_positions:
-                        self.close_intraday_us_positions()
-                    self.summary()
-                    self.daily_reset()
-                    last_day = today
-                    log.info(f"New day: {today}")
+                if self._should_run_us_close_cycle(now_utc, last_us_close_date):
+                    self._run_us_close_cycle(now_utc)
+                    last_us_close_date = self._current_us_date(now_utc)
 
                 # US scan
                 if is_us_open() and (now_ts - last_us) >= US_SCAN_INTERVAL:

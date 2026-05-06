@@ -20,6 +20,7 @@ LOG_DIR = resolve_log_dir()
 REPORT_DIR = resolve_report_dir()
 WORKBOOK_PATH = REPORT_DIR / "MarketPulse_TradeLog.xlsx"
 STATE_PATH = STATE_DIR / "us_eod_report_state.json"
+REPORT_STATUS_PATH = STATE_DIR / "us_report_status.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("us_eod_report")
@@ -67,6 +68,11 @@ def _load_report_state() -> dict:
 def _save_report_state(state: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _save_report_status(status: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    REPORT_STATUS_PATH.write_text(json.dumps(status, indent=2), encoding="utf-8")
 
 
 def _load_trade_records() -> list[dict]:
@@ -239,11 +245,26 @@ def run_if_due(now: dt.datetime | None = None) -> bool:
     try:
         from notifier import Notifier
 
-        Notifier(US_RESEARCH_TG_TOKEN, US_RESEARCH_TG_CHAT).alert(
+        notifier = Notifier(US_RESEARCH_TG_TOKEN, US_RESEARCH_TG_CHAT)
+        notifier.alert(
             f"US EOD workbook refreshed\nDate ET: {current.astimezone(ET).date().isoformat()}\nPath: {path}"
+        )
+        notifier.send_telegram_document(
+            path,
+            caption=f"US EOD workbook {current.astimezone(ET).date().isoformat()}",
+            silent=True,
         )
     except Exception:
         pass
+    _save_report_status(
+        {
+            "generated_at": current.isoformat(),
+            "workbook_path": str(path),
+            "date_et": current.astimezone(ET).date().isoformat(),
+            "state_path": str(STATE_PATH),
+            "sent_to_telegram": bool(US_RESEARCH_TG_TOKEN and US_RESEARCH_TG_CHAT),
+        }
+    )
     return True
 
 

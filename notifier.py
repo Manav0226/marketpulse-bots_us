@@ -52,6 +52,34 @@ class Notifier:
             log.warning(f"Telegram send failed: {e}")
             return False
 
+    def send_telegram_document(self, file_path, caption=None, silent=False):
+        if not self.tg_token or not self.tg_chat_id:
+            return False
+        elapsed = time.time() - self._last_tg
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
+        try:
+            url = f"https://api.telegram.org/bot{self.tg_token}/sendDocument"
+            with open(file_path, "rb") as handle:
+                resp = requests.post(
+                    url,
+                    data={
+                        "chat_id": self.tg_chat_id,
+                        "caption": caption or "",
+                        "disable_notification": silent,
+                    },
+                    files={"document": handle},
+                    timeout=30,
+                )
+            self._last_tg = time.time()
+            if resp.status_code == 200:
+                return True
+            log.warning(f"Telegram document error {resp.status_code}: {resp.text[:100]}")
+            return False
+        except Exception as e:
+            log.warning(f"Telegram document send failed: {e}")
+            return False
+
     # ── EMAIL ──
     def send_email(self, subject, body):
         if not self.email_from or not self.email_pass or not self.email_to:

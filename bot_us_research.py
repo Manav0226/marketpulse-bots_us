@@ -31,6 +31,8 @@ except Exception:  # pragma: no cover - fallback for stripped test runtime
     yf = None
 
 from core.config_loader import (
+    ALPACA_KEY,
+    ALPACA_SECRET,
     FINNHUB_KEY,
     GITHUB_REPO,
     GITHUB_TOKEN,
@@ -39,6 +41,7 @@ from core.config_loader import (
     US_RESEARCH_TG_CHAT,
     US_RESEARCH_TG_TOKEN,
 )
+from core.us_market_data import fetch_alpaca_bars
 from core.father_brain import FatherBrain
 from marketpulse_runtime import resolve_log_dir, resolve_state_dir
 from us_supervisor import refresh_us_supervision
@@ -121,6 +124,15 @@ def fetch_ohlcv(symbol: str, period: str = "6mo", interval: str = "1d") -> pd.Da
         df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=True)
         df.columns = [str(c).lower() for c in df.columns]
         return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def fetch_alpaca_ohlcv(symbol: str, days: int = 180) -> pd.DataFrame:
+    if pd is None:
+        return []
+    try:
+        return fetch_alpaca_bars(symbol, ALPACA_KEY, ALPACA_SECRET, days=days)
     except Exception:
         return pd.DataFrame()
 
@@ -453,6 +465,7 @@ def main():
     log.info("US weekly research bot")
     log.info("=" * 60)
     engine = TradingEngine(capital=100_000, max_risk_pct=0.02)
+    engine._ohlcv_fetcher = lambda symbol, interval='day', days=80: fetch_alpaca_ohlcv(symbol, days=days)
     results: list[dict] = []
     earnings_setups: list[dict] = []
 
@@ -468,7 +481,7 @@ def main():
         time.sleep(0.2)
 
     sector_rotation = detect_sector_rotation(results)
-    generated_at = dt.datetime.utcnow().isoformat() + "Z"
+    generated_at = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
     market_date = dt.date.today().isoformat()
     source_health = {
         "news_available": bool(FINNHUB_KEY and requests is not None),

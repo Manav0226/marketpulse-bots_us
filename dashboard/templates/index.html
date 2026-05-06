@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="30">
+  <title>MarketPulse Pro | Live Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="side-rail">
+      <div class="brand-block">
+        <div class="eyebrow">MarketPulse</div>
+        <h1>Operations</h1>
+        <p>Live control room for bot state, P&amp;L, risk, and active positions.</p>
+      </div>
+      <nav class="rail-nav">
+        {% for item in nav_items %}
+        <a href="{{ item.href }}" class="rail-link {% if item.active %}active{% endif %}">{{ item.label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="rail-panel">
+        <div class="panel-label">Live State</div>
+        <div class="rail-metric"><span>Tracked Bots</span><strong>{{ bot_metrics.tracked_bots }}</strong></div>
+        <div class="rail-metric"><span>Connected</span><strong>{{ bot_metrics.connected_bots }}</strong></div>
+        <div class="rail-metric"><span>Stale</span><strong>{{ bot_metrics.stale_bots }}</strong></div>
+      </div>
+      <div class="rail-panel muted-panel">
+        <div class="panel-label">Session Time</div>
+        <p>{{ now_ist }}</p>
+      </div>
+      <a href="/logout" class="logout-link">Logout</a>
+    </aside>
+
+    <main class="main-stage">
+      <section class="hero-card">
+        <div>
+          <div class="eyebrow">Live Dashboard</div>
+          <h2>Trade operations, bot health, and market alignment in one place</h2>
+          <p class="hero-copy">This page stays focused on execution. Use Bot Intelligence for evidence-backed learning, repeated failures, and proof tracking.</p>
+        </div>
+        <div class="hero-pills">
+          <span class="pill pill-strong">Council {{ council_direction }}</span>
+          <span class="pill">Brief {{ sentiment }}</span>
+          <span class="pill {% if risk_ok %}pill-good{% else %}pill-alert{% endif %}">{% if risk_ok %}Risk Clear{% else %}Risk Alert{% endif %}</span>
+        </div>
+      </section>
+
+      <section class="kpi-grid">
+        <article class="kpi-card">
+          <div class="panel-label">India Bot</div>
+          <div class="big-number {% if india_pnl >= 0 %}positive{% else %}negative{% endif %}">Rs {{ "%.0f"|format(india_pnl) }}</div>
+          <div class="sub-copy">Capital Rs {{ "%.0f"|format(india_cap) }}</div>
+        </article>
+        <article class="kpi-card">
+          <div class="panel-label">F&amp;O Bot</div>
+          <div class="big-number {% if fno_capital.get('session_pnl', 0) >= 0 %}positive{% else %}negative{% endif %}">Rs {{ "%.0f"|format(fno_capital.get('session_pnl', 0)) }}</div>
+          <div class="sub-copy">Capital Rs {{ "%.0f"|format(fno_capital.get('capital', 0)) }}</div>
+        </article>
+        <article class="kpi-card">
+          <div class="panel-label">US Live P&amp;L</div>
+          <div class="big-number {% if us_live_pnl >= 0 %}positive{% else %}negative{% endif %}">$ {{ "%.2f"|format(us_live_pnl) }}</div>
+          <div class="sub-copy">{{ us_live_position_count }} live positions{% if us_runtime_status.get('alpaca_connected') %} • Alpaca connected{% endif %}</div>
+        </article>
+        <article class="kpi-card">
+          <div class="panel-label">Combined Tracked P&amp;L</div>
+          <div class="big-number {% if bot_metrics.total_pnl >= 0 %}positive{% else %}negative{% endif %}">Rs {{ "%.0f"|format(bot_metrics.total_pnl) }}</div>
+          <div class="sub-copy">{{ bot_metrics.active_bots }} active bots across shared state</div>
+        </article>
+        <article class="kpi-card">
+          <div class="panel-label">Risk State</div>
+          <div class="status-line {% if risk_ok %}positive{% else %}negative{% endif %}">{% if risk_ok %}CLEAR{% else %}ALERT{% endif %}</div>
+          <div class="sub-copy">{{ risk_msg }}</div>
+        </article>
+      </section>
+
+      <section class="section-grid">
+        <article class="panel span-12">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Cloud Runtime</div>
+              <h3>US cloud session, live positions, and report status</h3>
+            </div>
+          </div>
+          <div class="bot-card-grid">
+            <div class="bot-card">
+              <div class="bot-card-top">
+                <div>
+                  <div class="bot-name">US Session</div>
+                  <div class="bot-meta">Father {{ father_opinion.get('us', {}).get('mode', 'unknown') }}</div>
+                </div>
+                <span class="chip {% if us_supervision.get('allow_new_entries') %}chip-good{% else %}chip-alert{% endif %}">
+                  {% if us_supervision.get('allow_new_entries') %}Entries On{% else %}Entries Paused{% endif %}
+                </span>
+              </div>
+              <div class="bot-stats">
+                <div><span>Window</span><strong>{{ us_runtime_status.get('sessions', {}).get('us', {}).get('window', '-') }}</strong></div>
+                <div><span>Alpaca</span><strong>{% if us_runtime_status.get('alpaca_connected') %}Connected{% else %}Offline{% endif %}</strong></div>
+                <div><span>Crypto</span><strong>{% if us_runtime_status.get('sessions', {}).get('crypto', {}).get('enabled') %}Enabled{% else %}Disabled{% endif %}</strong></div>
+                <div><span>Warnings</span><strong>{{ us_supervision.get('source_warnings', [])|length }}</strong></div>
+              </div>
+              <div class="sub-copy">Updated {{ us_runtime_status.get('generated_at', '-') }}</div>
+            </div>
+            <div class="bot-card">
+              <div class="bot-card-top">
+                <div>
+                  <div class="bot-name">Workbook</div>
+                  <div class="bot-meta">US EOD report</div>
+                </div>
+                <span class="chip {% if us_report_status.get('sent_to_telegram') %}chip-good{% else %}chip-alert{% endif %}">
+                  {% if us_report_status.get('sent_to_telegram') %}Sent to Telegram{% else %}Not Sent{% endif %}
+                </span>
+              </div>
+              <div class="bot-stats">
+                <div><span>Date ET</span><strong>{{ us_report_status.get('date_et', '-') }}</strong></div>
+                <div><span>Updated</span><strong>{{ us_report_status.get('generated_at', '-') }}</strong></div>
+              </div>
+              <div class="sub-copy">{{ us_report_status.get('workbook_path', 'No workbook recorded') }}</div>
+            </div>
+            <div class="bot-card">
+              <div class="bot-card-top">
+                <div>
+                  <div class="bot-name">Polymarket</div>
+                  <div class="bot-meta">Tracked paper bets</div>
+                </div>
+                <span class="chip">{{ polymarket_bets|length }} tracked</span>
+              </div>
+              <div class="sub-copy">
+                {% if polymarket_bets %}
+                  {% for market, bet in polymarket_bets.items() %}
+                    {{ market }}{% if not loop.last %}, {% endif %}
+                  {% endfor %}
+                {% else %}
+                  No tracked paper bets yet.
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="section-grid">
+        <article class="panel span-8">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Bot Coverage</div>
+              <h3>All tracked bots from shared state</h3>
+            </div>
+          </div>
+          <div class="bot-card-grid">
+            {% for bot in bot_cards %}
+            <div class="bot-card">
+              <div class="bot-card-top">
+                <div>
+                  <div class="bot-name">{{ bot.label }}</div>
+                  <div class="bot-meta">{{ bot.id|upper }}{% if bot.age_minutes is not none %} • {{ bot.age_minutes }} min ago{% endif %}</div>
+                </div>
+                <span class="chip {% if bot.stale %}chip-alert{% else %}chip-good{% endif %}">{% if bot.stale %}Stale{% else %}Fresh{% endif %}</span>
+              </div>
+              <div class="bot-stats">
+                <div><span>P&amp;L</span><strong class="{% if bot.pnl >= 0 %}positive{% else %}negative{% endif %}">Rs {{ "%.0f"|format(bot.pnl) }}</strong></div>
+                <div><span>Trades</span><strong>{{ bot.trades }}</strong></div>
+                <div><span>Wins</span><strong>{{ bot.wins }}</strong></div>
+                <div><span>Losses</span><strong>{{ bot.losses }}</strong></div>
+              </div>
+              <div class="bot-flags">
+                <span class="mini-pill">{% if bot.connected %}Connected{% else %}Offline{% endif %}</span>
+                <span class="mini-pill">{% if bot.dry_run %}Dry Run{% else %}Live Mode{% endif %}</span>
+                <span class="mini-pill">{{ bot.positions|length }} positions</span>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </article>
+
+        <article class="panel span-4">
+          <div class="eyebrow">Council</div>
+          <h3>Cross-market scoreboard</h3>
+          <div class="metric-stack">
+            <div class="metric-row">
+              <span>Direction</span>
+              <strong class="caps {{ council_direction|lower }}">{{ council_direction }}</strong>
+            </div>
+            <div class="metric-row">
+              <span>Confidence</span>
+              <strong>{{ council_confidence }}%</strong>
+            </div>
+            <div class="metric-row">
+              <span>Brief Date</span>
+              <strong>{{ brief_date }}</strong>
+            </div>
+          </div>
+          {% if council_markets %}
+          <div class="mini-grid">
+            {% for market, row in council_markets.items() %}
+            <div class="mini-card">
+              <div class="mini-card-title">{{ market.replace('_', ' ')|title }}</div>
+              <div class="mini-card-verdict {{ row.verdict|lower }}">{{ row.verdict }}</div>
+              <div class="mini-card-sub">Conf {{ row.confidence }}% | Flip {{ row.flip_risk }}%</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="muted">Council feed unavailable.</p>
+          {% endif %}
+        </article>
+      </section>
+
+      <section class="section-grid">
+        <article class="panel span-7">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Execution</div>
+              <h3>Open positions</h3>
+            </div>
+            <a href="/bot-intelligence" class="text-link">See intelligence view</a>
+          </div>
+          {% if open_positions %}
+          <table class="data-table">
+            <thead>
+              <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>SL</th><th>T1</th></tr>
+            </thead>
+            <tbody>
+              {% for sym, pos in open_positions.items() %}
+              <tr>
+                <td><a href="/bot-intelligence?symbol={{ sym|urlencode }}" class="table-link">{{ sym }}</a></td>
+                <td class="{% if pos.action == 'BUY' %}buy{% else %}sell{% endif %}">{{ pos.action }}</td>
+                <td>Rs {{ "%.2f"|format(pos.get('entry', 0)) }}</td>
+                <td>Rs {{ "%.2f"|format(pos.get('sl', 0)) }}</td>
+                <td>Rs {{ "%.2f"|format(pos.get('tgt1', 0)) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="muted">No open positions.</p>
+          {% endif %}
+        </article>
+
+        <article class="panel span-5">
+          <div class="eyebrow">US Live Trades</div>
+          <h3>Live US cloud positions from runtime state</h3>
+          {% if us_live_positions %}
+          <table class="data-table">
+            <thead>
+              <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>P&amp;L</th><th>Hold</th></tr>
+            </thead>
+            <tbody>
+              {% for sym, pos in us_live_positions.items() %}
+              <tr>
+                <td>{{ sym }}</td>
+                <td class="{% if pos.side == 'buy' %}buy{% else %}sell{% endif %}">{{ pos.side }}</td>
+                <td>$ {{ "%.2f"|format(pos.get('entry', 0) or 0) }}</td>
+                <td>$ {{ "%.2f"|format(pos.get('current', 0) or 0) }}</td>
+                <td class="{% if (pos.get('pnl', 0) or 0) >= 0 %}positive{% else %}negative{% endif %}">
+                  $ {{ "%.2f"|format(pos.get('pnl', 0) or 0) }}
+                  {% if pos.get('pnl_pct') is not none %}({{ "%.2f"|format(pos.get('pnl_pct', 0) or 0) }}%){% endif %}
+                </td>
+                <td>{{ pos.get('holding_style', '-') }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="muted">No live US runtime positions recorded yet.</p>
+          {% endif %}
+        </article>
+      </section>
+
+      <section class="section-grid">
+        <article class="panel span-5">
+          <div class="eyebrow">Recent Bot Activity</div>
+          <h3>Latest outcomes from shared bot state</h3>
+          <div class="timeline">
+            {% for item in live_outcomes %}
+            <a href="/bot-intelligence?symbol={{ item.symbol|urlencode }}" class="timeline-item timeline-link">
+              <div class="timeline-kicker">{{ item.bot }} • {{ item.symbol }}</div>
+              <div class="timeline-title">{{ item.headline }}</div>
+              <div class="timeline-copy">{{ item.belief }}</div>
+              <div class="timeline-meta">{{ item.status }}{% if item.time %} • {{ item.time }}{% endif %}</div>
+            </a>
+            {% endfor %}
+            {% if not live_outcomes %}
+            <p class="muted">No recent bot activity in shared state yet.</p>
+            {% endif %}
+          </div>
+        </article>
+      </section>
+
+      <section class="section-grid">
+        <article class="panel span-6">
+          <div class="eyebrow">Council Watchlist</div>
+          <h3>Symbols the council wants on radar</h3>
+          {% if council_watchlist %}
+          <table class="data-table">
+            <thead>
+              <tr><th>Symbol</th><th>Side</th><th>Conviction</th><th>Roles</th></tr>
+            </thead>
+            <tbody>
+              {% for item in council_watchlist %}
+              <tr>
+                <td>{{ item.symbol }}</td>
+                <td class="{% if item.direction == 'BUY' %}buy{% else %}sell{% endif %}">{{ item.direction }}</td>
+                <td>{{ item.conviction }}</td>
+                <td>{{ ", ".join(item.supporting_roles) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="muted">No council watchlist yet.</p>
+          {% endif %}
+        </article>
+
+        <article class="panel span-6">
+          <div class="eyebrow">Council Avoid List</div>
+          <h3>Symbols currently flagged for caution</h3>
+          {% if council_avoid_list %}
+          <table class="data-table">
+            <thead>
+              <tr><th>Symbol</th><th>Reason</th><th>Flip Risk</th></tr>
+            </thead>
+            <tbody>
+              {% for item in council_avoid_list %}
+              <tr>
+                <td>{{ item.symbol }}</td>
+                <td>{{ item.reason.replace('_', ' ')|title }}</td>
+                <td>{{ item.flip_risk }}%</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <p class="muted">No symbols flagged by the council.</p>
+          {% endif %}
+        </article>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
