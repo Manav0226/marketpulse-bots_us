@@ -40,18 +40,17 @@ from marketpulse_runtime import resolve_log_dir, resolve_state_dir
 from marketpulse_state import read_bot_state, update_bot_state
 
 # ══════════ CONFIG ══════════
-ALPACA_KEY = CFG_ALPACA_KEY or "PKKUINETA7LDZYHRFSLDE4D7EL"
-ALPACA_SECRET = CFG_ALPACA_SECRET or "E65zwT7AtX86S7bqb6PTvo3D2fhwmBhmPBj9st72mSKF"
+ALPACA_KEY = CFG_ALPACA_KEY
+ALPACA_SECRET = CFG_ALPACA_SECRET
 ALPACA_PAPER = CFG_ALPACA_PAPER
 ALPACA_BASE = "https://paper-api.alpaca.markets" if ALPACA_PAPER else "https://api.alpaca.markets"
 
 BINANCE_KEY = ""
 BINANCE_SECRET = ""
 
-# Use US_TG_TOKEN from env if set (separate US/Crypto Telegram bot),
-# otherwise fall back to the shared trader bot token.
-TELEGRAM_TOKEN   = US_EXEC_TG_TOKEN or "8611185332:AAErstaUsfon4vPjVTrEfr8AqGiaxhEYCAU"
-TELEGRAM_CHAT_ID = US_EXEC_TG_CHAT or "7973242803"
+# Use the dedicated US execution bot token from config/env.
+TELEGRAM_TOKEN   = US_EXEC_TG_TOKEN
+TELEGRAM_CHAT_ID = US_EXEC_TG_CHAT
 EMAIL_FROM = ""; EMAIL_PASSWORD = ""; EMAIL_TO = ""
 
 US_CAPITAL = CFG_US_CAPITAL        # Use $10K of the $100K paper money

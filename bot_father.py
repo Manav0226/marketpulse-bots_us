@@ -51,6 +51,22 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def write_father_opinion_payload(state_dir: Path, opinion: dict) -> None:
+    payload = json.dumps(opinion, indent=2, default=str)
+    paths = [
+        Path(state_dir) / "father_opinion.json",
+        Path("briefings") / "father_opinion.json",
+    ]
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+
+
 def build_father_opinion(
     brain_brief: dict,
     brain_state: dict,
@@ -216,8 +232,7 @@ class FatherBot:
             _read_json(self.state_dir / "council_state.json"),
             _read_json(self.state_dir / "risk_status.json"),
         )
-        path = self.state_dir / "father_opinion.json"
-        path.write_text(json.dumps(opinion, indent=2, default=str), encoding="utf-8")
+        write_father_opinion_payload(self.state_dir, opinion)
         refresh_us_supervision(self.state_dir)
         return opinion
 

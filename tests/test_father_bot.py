@@ -1,7 +1,28 @@
+import json
+import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 class FatherBotTests(unittest.TestCase):
+    def test_write_father_opinion_payload_skips_duplicate_resolved_paths(self):
+        from bot_father import write_father_opinion_payload
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / "briefings"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                write_father_opinion_payload(state_dir, {"market_regime": "NEUTRAL"})
+            finally:
+                os.chdir(old_cwd)
+
+            payload = (state_dir / "father_opinion.json").read_text(encoding="utf-8")
+            self.assertEqual(payload, json.dumps({"market_regime": "NEUTRAL"}, indent=2, default=str))
+
     def test_build_father_opinion_summarizes_fast_equity_and_supervised_fno(self):
         from bot_father import build_father_opinion
 

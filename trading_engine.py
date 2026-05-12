@@ -26,6 +26,7 @@ USAGE:
 import datetime, time, math, logging, requests, json
 import numpy as np
 import yfinance as yf   # kept as fallback for backtesting only — live uses Kite
+from core.config_loader import FINNHUB_KEY as CFG_FINNHUB_KEY
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -402,7 +403,7 @@ def score_multi_tf(symbol, kite=None):
         return s, tf, r
     except: return 0, {}, []
 
-FINNHUB_KEY = "d6s0cj1r01qpss2hsb00d6s0cj1r01qpss2hsb0g"
+FINNHUB_KEY = CFG_FINNHUB_KEY
 
 def score_sentiment(symbol):
     clean = symbol.replace(".NS","").replace(".BO","").replace("-USD","").replace("/USDT","")
