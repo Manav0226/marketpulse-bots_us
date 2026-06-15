@@ -327,6 +327,96 @@ class USExecutionResearchIntegrationTests(unittest.TestCase):
             usbot.STATE_DIR = original_state_dir
             usbot.POLYMARKET_WATCHLIST_PATH = original_watch_path
 
+    def test_exit_us_suppresses_duplicate_alert_for_same_trade_after_restart(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        from bot_us_crypto_v4 import USCryptoBot4
+
+        class FakeAlpaca:
+            def __init__(self):
+                self.calls = []
+
+            def close_position(self, sym):
+                self.calls.append(sym)
+
+        class FakeNotify:
+            def __init__(self):
+                self.closed = []
+                self.failed = []
+
+            def trade_closed(self, sym, entry, exit_price, pnl, reason, cur):
+                self.closed.append((sym, entry, exit_price, pnl, reason, cur))
+
+            def cant_exit(self, sym, detail):
+                self.failed.append((sym, detail))
+
+        bot = USCryptoBot4.__new__(USCryptoBot4)
+        bot.alpaca = FakeAlpaca()
+        bot.notify = FakeNotify()
+        bot.us_positions = {
+            "AAPL": {
+                "entry": 100.0,
+                "qty": 2,
+                "opened_at": "2026-05-05T12:00:00+00:00",
+            }
+        }
+        bot.recent_us_exit_alerts = {}
+        bot.us_pnl = 0.0
+        bot.us_wins = 0
+        bot.us_losses = 0
+        bot._sync_state = lambda: None
+
+        bot._exit_us("AAPL", 98.0, -4.0, "STOPLOSS")
+
+        self.assertEqual(bot.alpaca.calls, ["AAPL"])
+        self.assertEqual(len(bot.notify.closed), 1)
+        self.assertEqual(bot.us_losses, 1)
+
+        bot.us_positions = {
+            "AAPL": {
+                "entry": 100.0,
+                "qty": 2,
+                "opened_at": "2026-05-05T12:00:00+00:00",
+            }
+        }
+
+        bot._exit_us("AAPL", 98.0, -4.0, "STOPLOSS")
+
+        self.assertEqual(bot.alpaca.calls, ["AAPL"])
+        self.assertEqual(len(bot.notify.closed), 1)
+
+    def test_evaluate_us_exit_skips_duplicate_close_while_exit_pending(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        from bot_us_crypto_v4 import USCryptoBot4
+
+        bot = USCryptoBot4.__new__(USCryptoBot4)
+        bot._exit_us = lambda *args, **kwargs: self.fail("exit should not be retried while pending")
+
+        result = bot._evaluate_us_exit(
+            "AAPL",
+            {"pnl_pct": -2.0, "pnl": -4.0, "current": 98.0},
+            {
+                "entry": 100.0,
+                "opened_at": "2026-05-05T12:00:00+00:00",
+                "exit_pending": True,
+                "holding_style": "intraday",
+            },
+        )
+
+        self.assertTrue(result["handled"])
+
+    def test_should_send_us_day_alert_only_once_per_day(self):
+        sys.modules.setdefault("requests", types.SimpleNamespace(post=lambda *args, **kwargs: None))
+        from bot_us_crypto_v4 import USCryptoBot4
+
+        bot = USCryptoBot4.__new__(USCryptoBot4)
+        bot.alert_flags = {}
+
+        now = dt.datetime(2026, 5, 5, 20, 15, tzinfo=dt.timezone.utc)
+
+        self.assertTrue(bot._should_send_us_day_alert("us_loss_limit", now))
+        self.assertFalse(bot._should_send_us_day_alert("us_loss_limit", now))
+        self.assertTrue(bot._should_send_us_day_alert("us_loss_limit", now + dt.timedelta(days=1)))
+
 
 class USSupervisorTests(unittest.TestCase):
     def test_build_us_supervision_blocks_symbols_and_sets_size_multipliers(self):

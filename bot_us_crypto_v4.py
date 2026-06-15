@@ -146,8 +146,8 @@ except: log.warning("pip install ccxt")
 try:
     from trading_engine import TradingEngine
     HAS_ENGINE = True
-except ImportError:
-    log.error("trading_engine.py not found — put it in the same folder!")
+except ImportError as exc:
+    log.error(f"Trading engine import failed: {exc}")
     HAS_ENGINE = False
 
 from notifier import Notifier
@@ -180,6 +180,8 @@ class USCryptoBot4:
             "crypto": {"signals": 0, "pnl": 0.0},
             "polymarket": {"bets": 0, "paper_only": True},
         }
+        self.alert_flags = {}
+        self.recent_us_exit_alerts = {}
         self.promotion_status = {
             "us_equities": {"eligible_for_live": False, "paper_only": True},
             "crypto": {"eligible_for_live": False, "paper_only": CRYPTO_PAPER_TRADING},
@@ -237,12 +239,40 @@ class USCryptoBot4:
             bot = state.get("bots", {}).get(STATE_BOT_ID, {})
             self.us_positions = dict(bot.get("positions", {}) or {})
             self.polymarket_bets = dict(bot.get("bets", {}) or {})
+            self.alert_flags = dict(bot.get("alert_flags", {}) or {})
+            self.recent_us_exit_alerts = dict(bot.get("recent_us_exit_alerts", {}) or {})
             self.safe_mode = dict(bot.get("safe_mode", {}) or self.safe_mode)
             self.scheduler_status = dict(bot.get("scheduler_status", {}) or {})
             self.performance.update(bot.get("performance", {}) or {})
             self.promotion_status.update(bot.get("promotion_status", {}) or {})
+            self._prune_recent_us_exit_alerts()
         except Exception as exc:
             log.debug(f"State restore skipped: {exc}")
+
+    def _prune_recent_us_exit_alerts(self, now=None, ttl_hours=48):
+        if not isinstance(getattr(self, "recent_us_exit_alerts", {}), dict):
+            self.recent_us_exit_alerts = {}
+            return
+        current = now or datetime.datetime.now(datetime.timezone.utc)
+        keep = {}
+        for key, ts in self.recent_us_exit_alerts.items():
+            try:
+                parsed = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+                age_hours = (current - parsed.astimezone(datetime.timezone.utc)).total_seconds() / 3600
+                if age_hours <= ttl_hours:
+                    keep[key] = parsed.astimezone(datetime.timezone.utc).isoformat()
+            except Exception:
+                continue
+        self.recent_us_exit_alerts = keep
+
+    def _exit_alert_key(self, sym, tracked, reason):
+        tracked = tracked or {}
+        opened_at = str(tracked.get('opened_at') or '')
+        entry = round(float(tracked.get('entry', 0) or 0), 4)
+        qty = round(float(tracked.get('qty', 0) or 0), 4)
+        return f"{sym}|{opened_at}|{entry}|{qty}|{reason}"
 
     def _health_snapshot(self):
         return {
@@ -315,9 +345,12 @@ class USCryptoBot4:
             log.debug(f"Runtime status write skipped: {exc}")
 
     def _sync_state(self):
+        self._prune_recent_us_exit_alerts()
         update_bot_state(STATE_BOT_ID, {
             'positions': self.us_positions,
             'bets': self.polymarket_bets,
+            'alert_flags': self.alert_flags,
+            'recent_us_exit_alerts': self.recent_us_exit_alerts,
             'signals': [],
             'rejections': [],
             'pnl': round(self.us_pnl + self.crypto_pnl, 2),
@@ -672,6 +705,8 @@ class USCryptoBot4:
             except Exception:
                 days_open = 0
 
+        if tracked.get('exit_pending'):
+            return {'handled': True}
         if pnl_pct >= target_pct:
             log.info(f"  ðŸŽ¯ TARGET: {sym} +{pnl_pct:.1f}% (${pnl:.2f})")
             self._exit_us(sym, pos['current'], pnl, 'TARGET')
@@ -727,21 +762,46 @@ class USCryptoBot4:
 
     def _exit_us(self, sym, price, pnl, reason):
         """Close a US position on Alpaca"""
+        tracked = self.us_positions.get(sym, {})
+        exit_key = self._exit_alert_key(sym, tracked, reason)
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if tracked.get('exit_pending'):
+            log.info(f"    Exit already pending: {sym} ({tracked.get('exit_reason', reason)})")
+            return
+        if exit_key in getattr(self, "recent_us_exit_alerts", {}):
+            log.info(f"    Duplicate exit alert suppressed: {sym} ({reason})")
+            self.us_positions.pop(sym, None)
+            self._sync_state()
+            return
+        if tracked:
+            tracked['exit_pending'] = True
+            tracked['exit_reason'] = reason
+            tracked['exit_requested_at'] = now_iso
+            self.us_positions[sym] = tracked
+            self._sync_state()
         try:
             self.alpaca.close_position(sym)
             log.info(f"    Exit order placed: {sym}")
         except Exception as e:
             log.error(f"    EXIT FAILED {sym}: {e}")
+            if tracked:
+                tracked.pop('exit_pending', None)
+                tracked.pop('exit_reason', None)
+                tracked.pop('exit_requested_at', None)
+                self.us_positions[sym] = tracked
+                self._sync_state()
             self.notify.cant_exit(sym, f"Alpaca error: {e}\nClose manually at app.alpaca.markets")
             return
 
         self.us_pnl += pnl
         if pnl >= 0: self.us_wins += 1
         else: self.us_losses += 1
+        self.recent_us_exit_alerts[exit_key] = now_iso
         self.notify.trade_closed(sym, self.us_positions.get(sym,{}).get('entry',0), price, pnl, reason, "$")
         log_t([datetime.datetime.now().isoformat(), 'US', sym, 'EXIT', '', round(price,2),
             '', '', '', reason, '', 'CLOSED', round(pnl,2)])
         self.us_positions.pop(sym, None)
+        self._sync_state()
 
     def close_intraday_us_positions(self):
         if not self.alpaca:
@@ -771,7 +831,10 @@ class USCryptoBot4:
         if self.us_trades >= MAX_US_TRADES:
             log.info("  Max trades reached"); return
         if self.us_pnl <= -DAILY_LOSS_US:
-            self.notify.alert(f"⛔ <b>US LOSS LIMIT</b>\nP&L: ${self.us_pnl:.2f}"); return
+            if self._should_send_us_day_alert('us_loss_limit'):
+                self.notify.alert(f"⛔ <b>US LOSS LIMIT</b>\nP&L: ${self.us_pnl:.2f}")
+                self._sync_state()
+            return
 
         if not self.engine:
             log.error("Trading engine not loaded"); return
@@ -983,6 +1046,15 @@ class USCryptoBot4:
         current = now_utc or datetime.datetime.now(datetime.timezone.utc)
         return current.astimezone(ET).date()
 
+    def _should_send_us_day_alert(self, flag_key, now_utc=None):
+        current_date = self._current_us_date(now_utc).isoformat()
+        alert_flags = getattr(self, 'alert_flags', {})
+        if alert_flags.get(flag_key) == current_date:
+            return False
+        alert_flags[flag_key] = current_date
+        self.alert_flags = alert_flags
+        return True
+
     def _should_run_us_close_cycle(self, now_utc, last_close_date):
         current_et = now_utc.astimezone(ET)
         if current_et.weekday() >= 5:
@@ -1018,7 +1090,7 @@ class USCryptoBot4:
         self.sync_polymarket_snapshot()
 
         if not self.engine:
-            log.error("Trading engine required! Put trading_engine.py in same folder.")
+            log.error("Trading engine unavailable - see earlier import error.")
             return
 
         # Run initial backtest as a health check only. Live monitoring must not
