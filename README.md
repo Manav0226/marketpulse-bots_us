@@ -1,5 +1,9 @@
 # MarketPulse Bot Stack
 
+MarketPulse is a personal algorithmic trading and research project I built to learn how to design, run, and safely operate automated trading bots across multiple markets, and how to deploy that kind of long-running system to the cloud rather than just my laptop. It covers Indian equities, Indian F&O (NIFTY/BANKNIFTY) via the Zerodha Kite API, US equities, crypto, and paper research on Polymarket.
+
+It hasn't been a straight line: the first version went live too fast, which pushed me to slow down and paper-trade the system for two months before letting it trade live again, and to take pre-market diagnostics and risk management much more seriously in the process. The result is the setup documented below — a Railway-friendly deployment stack with a supervisor bot, scheduler, and persistent state, built to keep running safely even when my laptop is off.
+
 Cloud-ready trading and research bot workspace for:
 - India equity
 - India FNO
